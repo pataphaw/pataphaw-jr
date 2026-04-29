@@ -2,6 +2,16 @@ homeassistant:
   base_url: "http://localhost:8123"
   access_token: "YOUR_ACCESS_TOKEN_HERE"
 
+telegram:
+  bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
+  allowed_users:
+    - "YOUR_TELEGRAM_USER_ID"
+
+feishu:
+  app_id: "YOUR_FEISHU_APP_ID"
+  app_secret: "YOUR_FEISHU_APP_SECRET"
+  encrypt_key: "YOUR_FEISHU_ENCRYPT_KEY"  # Optional, for event encryption
+
 ac:
   default_entity: "climate.lumi_mcn02_d56f_air_conditioner"
   default_room: "主卧"
