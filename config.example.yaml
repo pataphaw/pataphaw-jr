@@ -1,3 +1,7 @@
 homeassistant:
   base_url: "http://localhost:8123"
   access_token: "YOUR_ACCESS_TOKEN_HERE"
+
+ac:
+  default_entity: "climate.lumi_mcn02_d56f_air_conditioner"
+  default_room: "主卧"
