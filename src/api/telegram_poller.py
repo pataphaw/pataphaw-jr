@@ -1,12 +1,26 @@
 import asyncio
 import httpx
-from src.services.ac_controller import AcController
+import yaml
+from pathlib import Path
+
+from src.conversation.manager import ConversationManager
+from src.conversation.history_store import HistoryStore
+from src.llm.parser import OllamaLLMParser, get_llm_parser
+from src.router.ha_router import HARouter, HomeAssistantClient
 
 
 class TelegramPoller:
-    def __init__(self, bot_token: str, ac_controller: AcController):
+    def __init__(
+        self,
+        bot_token: str,
+        llm_parser: OllamaLLMParser = None,
+        ha_router: HARouter = None,
+        conv_manager: ConversationManager = None,
+    ):
         self.bot_token = bot_token
-        self.ac = ac_controller
+        self.llm = llm_parser
+        self.router = ha_router
+        self.conv = conv_manager
         self.offset = 0
         self._running = False
         self._task = None
@@ -64,7 +78,24 @@ class TelegramPoller:
         if not text:
             return
 
-        response_text, _ = await self.ac.execute(text)
+        self.conv.add_user(text)
+
+        history = self.conv.get_history()
+        history_text = self.conv.format_for_llm(history)
+
+        parsed = await self.llm.parse(text, history_text, chat_id)
+
+        intent = parsed.get("intent", "unknown")
+        entity_id = parsed.get("entity_id")
+        params = parsed.get("params", {})
+        reply = parsed.get("reply", "收到指令")
+
+        if intent != "unknown" and entity_id:
+            response_text, result = await self.router.route(intent, entity_id, params)
+        else:
+            response_text = reply
+
+        self.conv.add_assistant(response_text)
 
         async with httpx.AsyncClient(timeout=30) as client:
             await client.post(

@@ -5,8 +5,12 @@ import yaml
 import json
 from pathlib import Path
 
-from src.services.ac_controller import AcController
 from src.api.telegram_poller import TelegramPoller
+from src.conversation.manager import ConversationManager
+from src.conversation.history_store import HistoryStore
+from src.llm.parser import get_llm_parser
+from src.router.ha_router import HARouter, HomeAssistantClient
+
 
 app = FastAPI(title="pataphaw-jr", version="0.1.0")
 
@@ -14,16 +18,25 @@ config = yaml.safe_load(Path("config.yaml").read_text())
 telegram_config = config.get("telegram", {})
 feishu_config = config.get("feishu", {})
 
-ac_controller = AcController()
+conv_manager = ConversationManager(store=HistoryStore())
+ha_client = HomeAssistantClient()
+ha_router = HARouter(ha_client)
+llm_parser = None
 telegram_poller: TelegramPoller = None
 
 
 @app.on_event("startup")
 async def startup():
-    global telegram_poller
+    global telegram_poller, llm_parser
     bot_token = telegram_config.get("bot_token")
     if bot_token:
-        telegram_poller = TelegramPoller(bot_token, ac_controller)
+        llm_parser = await get_llm_parser()
+        telegram_poller = TelegramPoller(
+            bot_token=bot_token,
+            llm_parser=llm_parser,
+            ha_router=ha_router,
+            conv_manager=conv_manager,
+        )
         await telegram_poller.start()
 
 
@@ -63,7 +76,25 @@ async def feishu_webhook(request: Request):
 
         chat_id = event.get("chat_id")
 
-        response_text, _ = await ac_controller.execute(text)
+        conv_manager.add_user(text)
+        history = conv_manager.get_history()
+        history_text = conv_manager.format_for_llm(history)
+
+        if llm_parser is None:
+            llm_parser = await get_llm_parser()
+
+        parsed = await llm_parser.parse(text, history_text, chat_id)
+        intent = parsed.get("intent", "unknown")
+        entity_id = parsed.get("entity_id")
+        params = parsed.get("params", {})
+        reply = parsed.get("reply", "收到指令")
+
+        if intent != "unknown" and entity_id:
+            response_text, _ = await ha_router.route(intent, entity_id, params)
+        else:
+            response_text = reply
+
+        conv_manager.add_assistant(response_text)
 
         await send_feishu_message(chat_id, response_text, feishu_config)
 
@@ -119,12 +150,3 @@ async def send_feishu_message(chat_id: str, text: str, config: dict):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
-
-
-@app.post("/api/ac/control")
-async def control_ac(text: str):
-    try:
-        response_text, result = await ac_controller.execute(text)
-        return {"response": response_text, "result": result}
-    except Exception as e:
-        return {"response": f"执行失败: {str(e)}", "result": None}
