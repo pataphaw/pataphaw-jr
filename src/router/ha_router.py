@@ -3,6 +3,10 @@ import yaml
 from pathlib import Path
 from typing import Optional
 
+from src.logging_config import get_logger
+
+logger = get_logger("router")
+
 
 MODE_MAP = {
     "cool": "cool",
@@ -35,23 +39,29 @@ class HomeAssistantClient:
 
     async def call_service(self, domain: str, service: str, data: dict):
         url = f"{self.base_url}/api/services/{domain}/{service}"
+        logger.debug(f"HA API POST {url} data={data}")
         async with httpx.AsyncClient(
             proxies={"http://": None, "https://": None},
             timeout=30
         ) as client:
             response = await client.post(url, headers=self._headers(), json=data)
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            logger.debug(f"HA API response: {result}")
+            return result
 
     async def get_state(self, entity_id: str) -> dict:
         url = f"{self.base_url}/api/states/{entity_id}"
+        logger.debug(f"HA API GET {url}")
         async with httpx.AsyncClient(
             proxies={"http://": None, "https://": None},
             timeout=30
         ) as client:
             response = await client.get(url, headers=self._headers())
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            logger.debug(f"HA API response: {result}")
+            return result
 
 
 class HARouter:
@@ -64,9 +74,11 @@ class HARouter:
 
     async def route(self, intent: str, entity_id: str, params: dict) -> tuple[str, dict]:
         if not entity_id:
+            logger.warning("Routing: no entity_id specified")
             return "未指定设备，请说明要控制哪个设备。", {}
 
         domain = self._domain(entity_id)
+        logger.debug(f"Routing: intent={intent}, domain={domain}, entity_id={entity_id}, params={params}")
 
         try:
             if intent == "turn_on":
@@ -82,52 +94,68 @@ class HARouter:
             elif intent == "query":
                 return await self._query(entity_id)
             else:
+                logger.warning(f"Unknown intent: {intent}")
                 return f"未知操作：{intent}", {}
         except Exception as e:
+            logger.error(f"Route error for intent={intent}, entity_id={entity_id}: {e}", exc_info=True)
             return f"执行失败：{str(e)}", {}
 
     async def _turn_on(self, domain: str, entity_id: str, params: dict) -> tuple[str, dict]:
         if domain == "climate":
-            result = await self.ha.call_service("climate", "set_hvac_mode", {"entity_id": entity_id, "hvac_mode": params.get("mode", "cool")})
+            mode = params.get("mode", "cool")
+            logger.info(f"HA call: domain={domain}, service=set_hvac_mode, entity={entity_id}, hvac_mode={mode}")
+            result = await self.ha.call_service("climate", "set_hvac_mode", {"entity_id": entity_id, "hvac_mode": mode})
             return f"已打开{self._friendly_name(entity_id)}", result
         elif domain in ("light", "switch", "fan"):
+            logger.info(f"HA call: domain={domain}, service=turn_on, entity={entity_id}")
             result = await self.ha.call_service(domain, "turn_on", {"entity_id": entity_id})
             return f"已打开{self._friendly_name(entity_id)}", result
+        logger.warning(f"Unsupported domain for turn_on: {domain}")
         return f"设备类型 {domain} 不支持 turn_on", {}
 
     async def _turn_off(self, domain: str, entity_id: str, params: dict) -> tuple[str, dict]:
         if domain == "climate":
+            logger.info(f"HA call: domain={domain}, service=set_hvac_mode, entity={entity_id}, hvac_mode=off")
             result = await self.ha.call_service("climate", "set_hvac_mode", {"entity_id": entity_id, "hvac_mode": "off"})
             return f"已关闭{self._friendly_name(entity_id)}", result
         elif domain in ("light", "switch", "fan"):
+            logger.info(f"HA call: domain={domain}, service=turn_off, entity={entity_id}")
             result = await self.ha.call_service(domain, "turn_off", {"entity_id": entity_id})
             return f"已关闭{self._friendly_name(entity_id)}", result
+        logger.warning(f"Unsupported domain for turn_off: {domain}")
         return f"设备类型 {domain} 不支持 turn_off", {}
 
     async def _set_temperature(self, entity_id: str, params: dict) -> tuple[str, dict]:
         temp = params.get("temperature")
         if not temp:
+            logger.warning("set_temperature: no temperature specified")
             return "未指定温度", {}
+        logger.info(f"HA call: domain=climate, service=set_temperature, entity={entity_id}, temperature={temp}")
         result = await self.ha.call_service("climate", "set_temperature", {"entity_id": entity_id, "temperature": temp})
         return f"已将{self._friendly_name(entity_id)}温度设置为{temp}°C", result
 
     async def _set_mode(self, entity_id: str, params: dict) -> tuple[str, dict]:
         mode = params.get("mode")
         if not mode:
+            logger.warning("set_mode: no mode specified")
             return "未指定模式", {}
         mode = MODE_MAP.get(mode, mode)
+        logger.info(f"HA call: domain=climate, service=set_hvac_mode, entity={entity_id}, hvac_mode={mode}")
         result = await self.ha.call_service("climate", "set_hvac_mode", {"entity_id": entity_id, "hvac_mode": mode})
         return f"已将{self._friendly_name(entity_id)}设置为{mode}模式", result
 
     async def _set_fan(self, entity_id: str, params: dict) -> tuple[str, dict]:
         fan = params.get("fan")
         if not fan:
+            logger.warning("set_fan: no fan specified")
             return "未指定风速", {}
         fan = FAN_MAP.get(fan, fan)
+        logger.info(f"HA call: domain=climate, service=set_fan_mode, entity={entity_id}, fan_mode={fan}")
         result = await self.ha.call_service("climate", "set_fan_mode", {"entity_id": entity_id, "fan_mode": fan})
         return f"已将{self._friendly_name(entity_id)}风速设置为{fan}", result
 
     async def _query(self, entity_id: str) -> tuple[str, dict]:
+        logger.info(f"HA call: domain={self._domain(entity_id)}, service=get_state, entity={entity_id}")
         state = await self.ha.get_state(entity_id)
         attrs = state.get("attributes", {})
         friendly = attrs.get("friendly_name", entity_id)
@@ -140,6 +168,7 @@ class HARouter:
         if "hvac_action" in attrs and attrs["hvac_action"]:
             extra.append(f"状态{attrs['hvac_action']}")
         info = "，".join(extra) if extra else st
+        logger.debug(f"Query result for {entity_id}: state={st}, attrs={attrs}")
         return f"{friendly}：{info}", state
 
     def _friendly_name(self, entity_id: str) -> str:
