@@ -7,10 +7,11 @@ def setup_logging(log_level: str = "INFO", log_dir: str = "logs", log_file: str 
     log_path = Path(log_dir)
     log_path.mkdir(parents=True, exist_ok=True)
 
-    file_handler = logging.handlers.RotatingFileHandler(
+    file_handler = logging.handlers.TimedRotatingFileHandler(
         log_path / log_file,
-        maxBytes=10 * 1024 * 1024,
-        backupCount=5,
+        when="midnight",
+        interval=1,
+        backupCount=14,
         encoding="utf-8",
     )
     file_handler.setLevel(logging.DEBUG)
