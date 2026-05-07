@@ -4,6 +4,10 @@ import yaml
 from pathlib import Path
 from typing import Optional
 
+from src.logging_config import get_logger
+
+logger = get_logger("llm")
+
 
 DEVICE_LIST = """
 可用设备清单：
@@ -57,26 +61,39 @@ class OllamaLLMParser:
 
     async def parse(self, user_message: str, history_text: str, chat_id: str = None) -> dict:
         prompt = SYSTEM_PROMPT_TEMPLATE.replace("{device_list}", DEVICE_LIST).replace("{history}", history_text)
+        logger.debug(f"Prompt built, history_len={len(history_text)}")
 
         messages = [
             {"role": "system", "content": prompt},
             {"role": "user", "content": user_message}
         ]
 
-        async with httpx.AsyncClient(timeout=120, proxies={"http://": None, "https://": None}) as client:
-            resp = await client.post(
-                f"{self.base_url}/api/chat",
-                json={"model": self.model, "messages": messages, "stream": False}
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            content = data["message"]["content"].strip()
-
+        logger.info(f"Calling Ollama: {self.base_url}/api/chat model={self.model}")
         try:
-            result = json.loads(content)
-            return result
-        except json.JSONDecodeError:
-            return {"intent": "unknown", "entity_id": None, "params": {}, "reply": content if content else "抱歉，我没有理解你的意思。"}
+            async with httpx.AsyncClient(timeout=120, proxies={"http://": None, "https://": None}) as client:
+                resp = await client.post(
+                    f"{self.base_url}/api/chat",
+                    json={"model": self.model, "messages": messages, "stream": False}
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                content = data["message"]["content"].strip()
+
+            logger.debug(f"Ollama response content: {content[:200]}...")
+
+            try:
+                result = json.loads(content)
+                logger.debug(f"JSON parsed successfully: {result}")
+                return result
+            except json.JSONDecodeError:
+                logger.warning(f"JSON parse failed, falling back to unknown intent. Raw content: {content[:100]}...")
+                return {"intent": "unknown", "entity_id": None, "params": {}, "reply": content if content else "抱歉，我没有理解你的意思。"}
+        except httpx.HTTPError as e:
+            logger.error(f"Ollama HTTP error: {e}", exc_info=True)
+            return {"intent": "unknown", "entity_id": None, "params": {}, "reply": "抱歉，LLM 服务暂时不可用。"}
+        except Exception as e:
+            logger.error(f"LLM parse error: {e}", exc_info=True)
+            return {"intent": "unknown", "entity_id": None, "params": {}, "reply": "抱歉，发生了一些错误。"}
 
 
 async def get_llm_parser() -> OllamaLLMParser:
@@ -85,4 +102,5 @@ async def get_llm_parser() -> OllamaLLMParser:
     llm_config = config.get("llm", {})
     model = llm_config.get("model", "qwen2.5vl:7b")
     base_url = llm_config.get("base_url", "http://localhost:11434")
+    logger.info(f"LLM parser initialized: model={model}, base_url={base_url}")
     return OllamaLLMParser(model=model, base_url=base_url)

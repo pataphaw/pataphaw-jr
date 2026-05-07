@@ -1,4 +1,7 @@
 from src.conversation.history_store import HistoryStore
+from src.logging_config import get_logger
+
+logger = get_logger("conversation")
 
 
 class ConversationManager:
@@ -6,9 +9,11 @@ class ConversationManager:
         self.store = store or HistoryStore()
 
     def add_user(self, text: str):
+        logger.debug(f"add_user: {text[:50]}..." if len(text) > 50 else f"add_user: {text}")
         self.store.add("user", text)
 
     def add_assistant(self, text: str):
+        logger.debug(f"add_assistant: {text[:50]}..." if len(text) > 50 else f"add_assistant: {text}")
         self.store.add("assistant", text)
 
     def get_history(self, days: int = 7) -> list[dict]:
