@@ -1,6 +1,7 @@
 homeassistant:
   base_url: "http://localhost:8123"
   access_token: "YOUR_ACCESS_TOKEN_HERE"
+  trust_env: false  # Set true only if this host needs ambient network settings to reach Home Assistant.
 
 telegram:
   bot_token: "YOUR_TELEGRAM_BOT_TOKEN"

@@ -10,8 +10,10 @@ from src.services.message_parser import MessageParser, AcCommand
 class AcController:
     def __init__(self, config_path: str = "config.yaml"):
         config = yaml.safe_load(Path(config_path).read_text())
-        self.base_url = config["homeassistant"]["base_url"]
-        self.access_token = config["homeassistant"]["access_token"]
+        ha_config = config["homeassistant"]
+        self.base_url = ha_config["base_url"]
+        self.access_token = ha_config["access_token"]
+        self.trust_env = ha_config.get("trust_env", False)
         self.default_entity = config.get("ac", {}).get("default_entity", "climate.lumi_mcn02_d56f_air_conditioner")
         self.parser = MessageParser()
 
@@ -23,10 +25,7 @@ class AcController:
 
     async def call_service(self, domain: str, service: str, data: dict):
         url = f"{self.base_url}/api/services/{domain}/{service}"
-        async with httpx.AsyncClient(
-            proxies={"http://": None, "https://": None},
-            timeout=30
-        ) as client:
+        async with httpx.AsyncClient(timeout=30, trust_env=self.trust_env) as client:
             response = await client.post(url, headers=self._headers(), json=data)
             response.raise_for_status()
             return response.json()
@@ -34,10 +33,7 @@ class AcController:
     async def get_status(self, entity_id: str = None) -> dict:
         eid = entity_id or self.default_entity
         url = f"{self.base_url}/api/states/{eid}"
-        async with httpx.AsyncClient(
-            proxies={"http://": None, "https://": None},
-            timeout=30
-        ) as client:
+        async with httpx.AsyncClient(timeout=30, trust_env=self.trust_env) as client:
             response = await client.get(url, headers=self._headers())
             response.raise_for_status()
             return response.json()

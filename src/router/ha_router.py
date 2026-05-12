@@ -28,8 +28,10 @@ FAN_MAP = {
 class HomeAssistantClient:
     def __init__(self, config_path: str = "config.yaml"):
         config = yaml.safe_load(Path(config_path).read_text())
-        self.base_url = config["homeassistant"]["base_url"]
-        self.access_token = config["homeassistant"]["access_token"]
+        ha_config = config["homeassistant"]
+        self.base_url = ha_config["base_url"]
+        self.access_token = ha_config["access_token"]
+        self.trust_env = ha_config.get("trust_env", False)
 
     def _headers(self):
         return {
@@ -40,10 +42,7 @@ class HomeAssistantClient:
     async def call_service(self, domain: str, service: str, data: dict):
         url = f"{self.base_url}/api/services/{domain}/{service}"
         logger.debug(f"HA API POST {url} data={data}")
-        async with httpx.AsyncClient(
-            proxies={"http://": None, "https://": None},
-            timeout=30
-        ) as client:
+        async with httpx.AsyncClient(timeout=30, trust_env=self.trust_env) as client:
             response = await client.post(url, headers=self._headers(), json=data)
             response.raise_for_status()
             result = response.json()
@@ -53,10 +52,7 @@ class HomeAssistantClient:
     async def get_state(self, entity_id: str) -> dict:
         url = f"{self.base_url}/api/states/{entity_id}"
         logger.debug(f"HA API GET {url}")
-        async with httpx.AsyncClient(
-            proxies={"http://": None, "https://": None},
-            timeout=30
-        ) as client:
+        async with httpx.AsyncClient(timeout=30, trust_env=self.trust_env) as client:
             response = await client.get(url, headers=self._headers())
             response.raise_for_status()
             result = response.json()
