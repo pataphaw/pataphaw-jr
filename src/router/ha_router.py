@@ -1,5 +1,6 @@
 import httpx
 import yaml
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -23,6 +24,15 @@ FAN_MAP = {
     "high": "high",
     "auto": "auto",
 }
+
+THERMOHYGROMETER_ENTITIES = {
+    "temperature": "sensor.miaomiaoce_t9_c4b7_temperature",
+    "humidity": "sensor.miaomiaoce_t9_c4b7_relative_humidity",
+    "battery": "sensor.miaomiaoce_t9_c4b7_battery_level",
+}
+
+STALE_SENSOR_AFTER = timedelta(minutes=10)
+CHINA_TZ = timezone(timedelta(hours=8))
 
 
 class HomeAssistantClient:
@@ -151,6 +161,9 @@ class HARouter:
         return f"已将{self._friendly_name(entity_id)}风速设置为{fan}", result
 
     async def _query(self, entity_id: str) -> tuple[str, dict]:
+        if entity_id in THERMOHYGROMETER_ENTITIES.values():
+            return await self._query_thermohygrometer()
+
         logger.info(f"HA call: domain={self._domain(entity_id)}, service=get_state, entity={entity_id}")
         state = await self.ha.get_state(entity_id)
         attrs = state.get("attributes", {})
@@ -167,6 +180,59 @@ class HARouter:
         logger.debug(f"Query result for {entity_id}: state={st}, attrs={attrs}")
         return f"{friendly}：{info}", state
 
+    async def _query_thermohygrometer(self) -> tuple[str, dict]:
+        logger.info("HA call: aggregate query for thermohygrometer")
+        states = {}
+        for key, entity_id in THERMOHYGROMETER_ENTITIES.items():
+            states[key] = await self.ha.get_state(entity_id)
+
+        temperature = self._format_sensor_value(states["temperature"])
+        humidity = self._format_sensor_value(states["humidity"])
+        battery = self._format_sensor_value(states["battery"])
+
+        latest_report = self._latest_timestamp(states.values())
+        updated_text = self._format_timestamp(latest_report)
+        stale_text = ""
+        if latest_report and datetime.now(timezone.utc) - latest_report > STALE_SENSOR_AFTER:
+            stale_text = "，数据可能不是实时值"
+
+        return (
+            f"温湿度计：温度{temperature}，湿度{humidity}，电量{battery}，"
+            f"数据更新于{updated_text}{stale_text}",
+            states,
+        )
+
+    def _format_sensor_value(self, state: dict) -> str:
+        value = state.get("state")
+        if value in (None, "unknown", "unavailable"):
+            return "暂无数据"
+        unit = state.get("attributes", {}).get("unit_of_measurement", "")
+        return f"{value}{unit}"
+
+    def _latest_timestamp(self, states) -> Optional[datetime]:
+        timestamps = []
+        for state in states:
+            for key in ("last_updated", "last_reported", "last_changed"):
+                parsed = self._parse_ha_timestamp(state.get(key))
+                if parsed:
+                    timestamps.append(parsed)
+                    break
+        return max(timestamps) if timestamps else None
+
+    def _parse_ha_timestamp(self, value: Optional[str]) -> Optional[datetime]:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+        except ValueError:
+            logger.warning(f"Failed to parse HA timestamp: {value}")
+            return None
+
+    def _format_timestamp(self, value: Optional[datetime]) -> str:
+        if not value:
+            return "未知时间"
+        return value.astimezone(CHINA_TZ).strftime("%Y-%m-%d %H:%M")
+
     def _friendly_name(self, entity_id: str) -> str:
         mapping = {
             "climate.lumi_mcn02_d56f_air_conditioner": "主卧空调",
@@ -178,5 +244,8 @@ class HARouter:
             "light.zhimi_v6_ab09_indicator_light": "空气净化器指示灯",
             "light.yeelink_mbulb3_0a5d_light": "Mi Smart LED Bulb",
             "light.yeelink_ceiling22_4117_light": "Mi Smart LED Ceiling Light",
+            "sensor.miaomiaoce_t9_c4b7_temperature": "温湿度计",
+            "sensor.miaomiaoce_t9_c4b7_relative_humidity": "温湿度计湿度",
+            "sensor.miaomiaoce_t9_c4b7_battery_level": "温湿度计电量",
         }
         return mapping.get(entity_id, entity_id)
