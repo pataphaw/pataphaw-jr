@@ -35,6 +35,10 @@ DEVICE_LIST = """
 
 8. Mi Smart LED Ceiling Light (light.yeelink_ceiling22_4117_light)
    - 支持操作：开/关
+
+9. 温湿度计 (sensor.miaomiaoce_t9_c4b7_temperature)
+   - 支持操作：查询温度、湿度、电量、状态
+   - 相关实体：湿度(sensor.miaomiaoce_t9_c4b7_relative_humidity)、电量(sensor.miaomiaoce_t9_c4b7_battery_level)
 """
 
 
